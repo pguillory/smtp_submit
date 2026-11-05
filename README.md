@@ -32,7 +32,7 @@ SMTPSubmit isn't on Hex yet. Add it as a git dependency pinned to a tag:
 ```elixir
 def deps do
   [
-    {:smtp_submit, git: "https://github.com/pguillory/smtp_submit.git", tag: "v0.1.0"}
+    {:smtp_submit, git: "https://github.com/pguillory/smtp_submit.git", tag: "v0.2.0"}
   ]
 end
 ```
@@ -93,7 +93,10 @@ Both return one of three outcomes:
 `:internal`), a `stage` (`:open` covers connect, greeting, EHLO, STARTTLS and AUTH,
 before anything was sent; `:deliver` covers MAIL through the final reply), the
 server's `reply_code` when there was one, the expired `timeout_ms`, and
-`outcome_unknown?`.
+`outcome_unknown?`. An `:auth_failed` error also has `auth_reply_codes`, the codes
+of the AUTH refusals observed, one per refused mechanism in the order tried, and
+its `reply_code` is the last of them. A 535 ("authentication credentials invalid",
+RFC 4954) means the server refused the credentials themselves.
 
 ### Config
 
@@ -209,9 +212,11 @@ Its TLS identity in `priv/fake_tls` is synthetic and public; see the README ther
   slow server.
 - No SIZE check. An oversized message is refused with the server's 552 after the
   whole body was sent.
-- `:auth_failed` can't tell a wrong password from any other AUTH failure: gen_smtp
-  tries CRAM-MD5, LOGIN, PLAIN and XOAUTH2 in turn and reports all refusals as one.
-  There is no choice of mechanism.
+- There is no choice of AUTH mechanism: gen_smtp tries CRAM-MD5, LOGIN, PLAIN and
+  XOAUTH2 in turn, among those the server offers. `auth_reply_codes` comes from
+  gen_smtp's trace callback, which doesn't report XOAUTH2's reply, so a refusal
+  there adds no code. The traces are gen_smtp 1.3's; a release that changed them
+  would leave the list empty.
 - With implicit TLS, OTP sends an IP-literal host as SNI, which RFC 6066 disallows.
   The certificate is still checked against the IP. Hostnames are unaffected.
 - No SMTPUTF8: addresses are ASCII. `send/4` takes 7-bit messages only, though

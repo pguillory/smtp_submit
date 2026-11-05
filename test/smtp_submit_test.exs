@@ -354,15 +354,53 @@ defmodule SMTPSubmitTest do
   end
 
   describe "authentication" do
-    test "a refused password is a generic auth failure after trying each mechanism" do
+    test "a refused password is an auth failure with each mechanism's refusal code" do
       {server, endpoint} = start_fake()
 
-      assert {:error, %Error{code: :auth_failed, stage: :open, reply_code: nil} = error} =
+      assert {:error, %Error{code: :auth_failed, stage: :open, reply_code: 535} = error} =
                send_email(endpoint, config: config(password: "wrong-password"))
 
+      assert error.auth_reply_codes == [535, 535]
       refute error.outcome_unknown?
       assert auth_attempts(server) == [{:auth, "LOGIN"}, {:auth, "PLAIN"}]
       assert FakeServer.messages(server) == []
+    end
+
+    test "the codes follow the server's replies to each attempt" do
+      for {reply, codes} <- [
+            {"534 5.7.9 Application-specific password required", [534, 535]},
+            {"454 4.7.0 Temporary authentication failure", [454, 535]}
+          ] do
+        {server, endpoint} = start_fake()
+        :ok = FakeServer.script(server, :auth, {:reply, reply})
+
+        assert {:error, %Error{code: :auth_failed, reply_code: 535, auth_reply_codes: ^codes}} =
+                 send_email(endpoint, config: config(password: "wrong-password"))
+
+        stop_supervised!(FakeServer)
+      end
+
+      # A mechanism the server offers but refuses outright, before LOGIN and PLAIN.
+      {_server, endpoint} = start_fake(auth_mechanisms: ["CRAM-MD5", "LOGIN", "PLAIN"])
+
+      assert {:error, %Error{code: :auth_failed, auth_reply_codes: [501, 535, 535]}} =
+               send_email(endpoint, config: config(password: "wrong-password"))
+    end
+
+    test "every refusal gen_smtp traces adds its code; other replies and traces add none" do
+      assert {:error, %Error{code: :auth_failed, reply_code: 535} = error} =
+               deliver(
+                 Map.put(config(), :client, SMTPSubmit.Test.TracedRefusalClient),
+                 email()
+               )
+
+      assert error.auth_reply_codes == [504, 535, 454, 534, 535]
+      refute inspect(error) =~ "fake-password"
+    end
+
+    test "other failures carry no AUTH codes" do
+      {_server, endpoint} = start_fake(tls: :none)
+      assert {:error, %Error{auth_reply_codes: []}} = send_email(endpoint)
     end
 
     test "falls back to AUTH PLAIN when AUTH LOGIN is refused" do

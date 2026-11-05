@@ -36,7 +36,8 @@ defmodule SMTPSubmit do
   * `:connect_timeout` - the TCP connect and, for implicit TLS, the
     handshake (inside open); default 15 000 ms
   * `:client` - a module with `gen_smtp_client`'s `open/1`, `deliver/2` and
-    `close/1`; default `:gen_smtp_client`. For tests and wrappers.
+    `close/1`; default `:gen_smtp_client`. For tests and wrappers. Its `open/1`
+    options include a `:trace_fun`, which yields `auth_reply_codes`.
   """
 
   alias SMTPSubmit.Email

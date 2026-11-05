@@ -8,18 +8,33 @@ defmodule SMTPSubmit.Error do
   * `stage` - `:open` (connect, greeting, EHLO, TLS and AUTH) or `:deliver`
     (MAIL, RCPT, DATA and the final acceptance). Nothing has been sent at
     `:open`, so a `:rejected` there (a refused greeting or STARTTLS) is final.
-  * `reply_code` - the server's three-digit reply code, when there was one
+  * `reply_code` - the server's three-digit reply code, when there was one. For
+    `:auth_failed`, the last AUTH refusal's code
+  * `auth_reply_codes` - for `:auth_failed`, the reply codes of the AUTH refusals
+    observed, one per refused mechanism, in the order tried; `[]` otherwise. 535 is
+    RFC 4954's "authentication credentials invalid", which tells a refused password
+    from a mechanism the server didn't take
   * `timeout_ms` - the deadline that expired, for `:timeout`
   * `outcome_unknown?` - the server may already have accepted the email, so it
     must never be resent automatically
 
-  `:auth_failed` is generic: the dependency collapses every refused mechanism
-  into one result without the reply code, so it is not evidence that the
-  password was revoked. Only a well-formed 4xx or 5xx reply during delivery is
-  a definite refusal; every other delivery failure has an unknown outcome.
+  `:auth_failed` covers every refused mechanism: the dependency tries each one the
+  server offers and reports them as one failure. The codes come from its trace
+  callback, which reports the replies to CRAM-MD5, LOGIN and PLAIN but not to
+  XOAUTH2, so a refusal there adds none. A gen_smtp release that changed those
+  traces would leave the list empty rather than wrong. Only a well-formed 4xx or
+  5xx reply during delivery is a definite refusal; every other delivery failure
+  has an unknown outcome.
   """
 
-  defexception [:code, :stage, :reply_code, :timeout_ms, outcome_unknown?: false]
+  defexception [
+    :code,
+    :stage,
+    :reply_code,
+    :timeout_ms,
+    auth_reply_codes: [],
+    outcome_unknown?: false
+  ]
 
   @type t :: %__MODULE__{
           code:
@@ -34,6 +49,7 @@ defmodule SMTPSubmit.Error do
             | :internal,
           stage: :open | :deliver,
           reply_code: 200..599 | nil,
+          auth_reply_codes: [400..599],
           timeout_ms: pos_integer() | nil,
           outcome_unknown?: boolean()
         }

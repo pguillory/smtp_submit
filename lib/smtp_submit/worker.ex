@@ -141,7 +141,7 @@ defmodule SMTPSubmit.Worker do
   end
 
   defp open(client, options) do
-    case client.open(options) do
+    case client.open([{:trace_fun, &trace/2} | options]) do
       {:ok, socket} -> {:ok, socket}
       failure -> {:error, open_error(failure)}
     end
@@ -152,7 +152,14 @@ defmodule SMTPSubmit.Worker do
   end
 
   defp open_error({:error, _type, {:permanent_failure, _host, :auth_failed}}) do
-    %Error{code: :auth_failed, stage: :open}
+    codes = :auth_reply_codes |> Process.get([]) |> Enum.reverse()
+
+    %Error{
+      code: :auth_failed,
+      stage: :open,
+      reply_code: List.last(codes),
+      auth_reply_codes: codes
+    }
   end
 
   defp open_error({:error, _type, {_failure, _host, reason}})
@@ -188,6 +195,38 @@ defmodule SMTPSubmit.Worker do
 
   defp open_error(_failure) do
     %Error{code: :internal, stage: :open}
+  end
+
+  # gen_smtp 1.3's traces of a refused AUTH attempt (do_AUTH_each), each with the
+  # server's reply as a binary or {ok, Binary}. Only a well-formed 4xx or 5xx code is
+  # kept, in this worker's process dictionary. Every other trace is ignored unread:
+  # some carry the options, password included.
+  @auth_refusals [
+    ~c"authentication rejected: ~s~n",
+    ~c"got ~s~n",
+    ~c"username rejected: ~s",
+    ~c"password rejected: ~s",
+    ~c"authentication rejected ~p~n"
+  ]
+
+  defp trace(format, [reply]) when format in @auth_refusals do
+    reply =
+      case reply do
+        {:ok, reply} -> reply
+        reply -> reply
+      end
+
+    case reply_code(reply) do
+      code when code in 400..599 ->
+        Process.put(:auth_reply_codes, [code | Process.get(:auth_reply_codes, [])])
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp trace(_format, _args) do
+    :ok
   end
 
   defp deliver(client, socket, envelope) do
